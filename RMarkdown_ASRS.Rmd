@@ -1647,6 +1647,204 @@ The "new normal" for the institutional investing, despite the post-COVID rebound
 
 3.  As ASRS waits for the continual "rebound" its unfunded liabilities continue to grow.
 
+### Asset Allocation (2001-2021) w/ R (Custom)
+```{r assets, dpi=400, fig.width=8, fig.height=5, fig.align = "center", message=FALSE, warning=FALSE}
+
+rm(list=ls())
+###Load/install packages
+#R.Version()
+#https://github.com/ReasonFoundation/pensionviewr
+#Create token -> usethis::edit_r_environ() -> restart -> Sys.getenv("GITHUB_PAT")
+#install.packages('devtools')
+#library(devtools)
+#devtools::install_github("ReasonFoundation/reasontheme",force = TRUE)
+#devtools::install_github("ReasonFoundation/pensionviewr", force = TRUE)
+library(reasontheme)
+library(pensionviewr)
+library(ggplot2)
+library(tidyverse)
+library(tseries)
+library(data.table)
+library(readr)
+library(rsconnect)
+library(dplyr)
+library(plyr)
+
+###
+##Pull PERSI data
+##Load list of plans
+pl <- planList() 
+
+plotTheme <- ggplot2::theme(    panel.grid.major = element_blank(),
+                                 panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"),
+                                 plot.margin = margin(0.5,1,0,0, "cm"),
+                                 axis.text.y = element_text(size=12, color = "black"),
+                                 axis.text.x = element_text(size=12, color = "black", angle = 0, hjust = 0.5, vjust = -1),
+                                 axis.title = element_text(size = 12, face = "bold"),
+                                 legend.text = element_text(size = 12),
+                                 legend.title = element_blank(),
+                                 text = element_text(family = "Calibri"))
+
+
+#Load Asset Allocation data for PERSI
+#urlfile2="https://raw.githubusercontent.com/ReasonFoundation/GraphicsR/master/R/PERSI.Asset.Alloc.csv"
+#PERSI.assets <- data.table(read_csv(url(urlfile2), col_names = TRUE, na = c(""), skip_empty_rows = TRUE, col_types = cols(.default = "n")))
+
+###pullAssetData()
+ 
+################ Pulling all asset data
+assets <- data.table(
+  pullAssetData(fy = 2001, mva = FALSE)
+)
+
+################# Renaming plans
+
+
+#################
+assets <- data.frame(assets)
+
+##### filterAssets()
+
+####### filtering data & selecting only PERSI
+data <- data.frame(assets)
+########################################
+
+filterAssets <- function (data, fy = 2001, plan = NULL) 
+{
+  data <- data.frame(data)
+  data[, 5:83] <- data[, 5:83] %>% mutate_all(as.numeric)
+  data <- data %>% replace(is.na(.), 0)
+  data$year <- as.numeric(data$year)
+  equity <- data.frame(data %>% select(contains("equity"), 
+    -contains("private"), -contains("private_debt"), -contains("alternative")))
+  fixed <- data.frame(data %>% select(contains("fixed"), contains("treasury"), 
+    contains("inflation_linked_bonds"), contains("corporate_bonds")))
+  private.equity <- data.frame(data %>% select(contains("private_equity")))
+  real.estate <- data.frame(data %>% select(contains("estate")))
+  cash <- data.frame(data %>% select(contains("short"), contains("cash")))
+  infrastructure <- data.frame(data %>% select(contains("infrastructure")))
+  hedge <- data.frame(data %>% select(contains("hedge"), -contains("equity")))
+  x <- c(colnames(equity), colnames(fixed), colnames(private.equity), 
+    colnames(real.estate), colnames(cash), colnames(infrastructure), 
+    colnames(hedge))
+  other <- data.frame(data %>% select(-contains(x), -contains("year"), 
+    -contains("plan_id"), -contains("display_name"), -contains("state"), 
+    -contains("market")))
+  data$private.equity <- 0
+  data$real.estate <- 0
+  data$hedge <- 0
+  data$infrastructure <- 0
+  data$other.alternatives <- 0
+  data$equity <- 0
+  data$fixed <- 0
+  data$cash <- 0
+  for (i in (1:length(data$equity))) {
+    data$private.equity[i] <- sum(private.equity[i, ])
+    data$real.estate[i] <- sum(real.estate[i, ])
+    data$hedge[i] <- sum(hedge[i, ])
+    data$infrastructure[i] <- sum(infrastructure[i, ])
+    data$other.alternatives[i] <- sum(other[i, ])
+    data$equity[i] <- sum(equity[i, ])
+    data$fixed[i] <- sum(fixed[i, ])
+    data$cash[i] <- sum(cash[i, ])
+  }
+  assets <- data %>% select(year, display_name, state, private.equity, 
+    real.estate, hedge, infrastructure, other.alternatives, 
+    equity, fixed, cash)
+  if (!is.null(plan)) {
+    assets <- assets %>% filter(display_name == plan)
+  }
+  assets$total <- 0
+  y <- as.numeric(length(assets$total))
+  assets[, 4:11] <- assets[, 4:11] %>% mutate_all(as.numeric)
+  for (i in (1:y)) {
+    assets$total[i] <- sum(assets[i, 4:11])
+  }
+  assets$equity <- as.numeric(assets$equity)
+  assets$other.alternatives <- as.numeric(assets$other.alternatives)
+  assets$total <- as.numeric(assets$total)
+  assets <- assets %>% filter(year >= fy)
+  colnames(assets) <- c("year", "Plan", "State", "Private Equity", 
+    "Real Estate", "Hedge Funds", "Infrastructure", "Other Alternatives", 
+    "Total Equity", "Fixed Income", "Cash Equivalents", 
+    "Total")
+  assets
+}
+
+
+assets <- filterAssets(data = assets, fy = 2001, plan = "Arizona State Retirement System")
+colnames(assets)[2] <- "plan_name"
+
+PERSI.assets <- data.table(assets)
+
+#### Assigning any gap w/ 100% to Equities
+
+#### Removing unnecessary columns
+PERSI.assets <- data.frame(PERSI.assets %>% select(-Total))
+data <- assets
+############# assetPlot()
+#View(PERSI.assets)
+assetPlot <- function (data, interactive = FALSE) 
+{
+  data <- data.table(data)
+  colnames( data) <- c("year", "Plan", "State", "Private Equity", 
+    "Real Estate",  "Hedge Funds", "Infrastructure", "Other Alternatives","Total Public Equity", "Fixed Income", "Cash Equivalents")
+  alloc <- data.table(melt(data, id.vars = "year"))
+  alloc$value <- as.numeric(alloc$value)
+  alloc$value <- round(alloc$value * 100, 1)
+
+  
+  
+  colors <- c(palette_reason$Red, palette_reason$LightRed, 
+    palette_reason$Orange, palette_reason$LightOrange, palette_reason$Yellow, 
+    palette_reason$DarkGrey, palette_reason$SatBlue, palette_reason$LightBlue)
+  graph <- ggplot(alloc, aes(x = year, y = value, fill = variable, 
+    group = variable, text = paste0("Fiscal Year: ", year, 
+      "<br>", "Class: ", variable, "<br>", "Allocation: ", 
+      value, "%"))) + geom_area(cposition = "stack", stat = "identity") + 
+    scale_y_continuous(breaks = seq(0, 100, by = 10),labels = function(x) paste0(x, "%"), 
+      name = "% of Total Portfolio", expand = c(0,0)) + scale_fill_manual(values = colors) + 
+     ggplot2::scale_x_continuous(breaks = seq(min(data$year), 
+    max(data$year), by = 2), expand = c(0, 0))+
+    theme_bw() + theme(panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(), 
+    panel.border = element_blank(),
+    axis.title.x = element_blank(), 
+    axis.line = element_line(colour = "black"), legend.title = element_blank(),
+    legend.position="bottom")+
+    plotTheme + 
+  if (isTRUE(interactive)) {
+    graph <- ggplotly(graph, tooltip = "text")
+  }
+  graph
+}
+
+
+## Changing "Alternatives" to "Private Equity" and renaming "Other" to "Other Laternatives"
+#PERSI.assets <- PERSI.assets %>% select(year, real.estate, alternatives, other, equity, fixed.income, cash)
+#colnames(PERSI.assets) <- c("year", "Real Estate", "Private Equity", "Other Alternatives", "Total Equities", "Fixed Income", "Cash Equivalents")
+
+#View(PERSI.assets)
+#Transpose data from long ot wide format (each year contains Variable & Value)
+#PERSI.assets <- melt(PERSI.assets, id.vars="year")
+
+#assets <- ggplot(PERSI.assets) + geom_area(aes(x = year, y = value, fill = variable, group = variable), position="fill")+
+#  scale_fill_manual(values=c(palette_reason$LightRed,palette_reason$Orange, palette_reason$Yellow,
+#                             palette_reason$DarkGrey, palette_reason$LightBlue, palette_reason$SatBlue))+
+#  scale_y_continuous(labels = function(x) paste0(x*100,"%"), name = "% of Investment Portfolio",
+#                     breaks = seq(0, 1, by = 0.1), limits = c(0, 1), expand=c(0,0))+
+#  scale_x_continuous(labels = function(x) paste0(x, ""), name = "",
+#                     breaks = seq(2001, 2019, by = 2), limits = c(2001, 2019), expand=c(0,0))+
+#  ggplot2::theme(axis.text = element_text(size = 12), 
+#                     axis.title = element_text(size = 12, face = "bold"))+
+#  theme_bw()+
+#  plotTheme+
+#  theme(legend.position="bottom")
+
+assets <- assetPlot(PERSI.assets, interactive = FALSE) 
+assets
+```
+
 ### Change in Risk-Free Rate vs. Discount Rate (2001-2021) w/ R (linePlot())
 
 ```{r treasury, dpi=400, echo = FALSE, fig.cap = "Source: Pension Integrity Project analysis of ASRS actuarial valuation reports.", fig.width=8, fig.height=5, fig.align = "center", message=FALSE, warning=FALSE}
